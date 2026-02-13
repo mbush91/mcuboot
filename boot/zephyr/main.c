@@ -29,6 +29,10 @@
 #include <soc.h>
 #include <zephyr/linker/linker-defs.h>
 
+#if defined(CONFIG_BOOT_IMAGE_ACCESS_HOOKS) && defined(CONFIG_SOC_FAMILY_SILABS_S2)
+#include <zephyr/drivers/hwinfo.h>
+#endif
+
 #if defined(CONFIG_BOOT_DISABLE_CACHES)
 #include <zephyr/cache.h>
 #endif
@@ -43,6 +47,7 @@
 #include "bootutil/bootutil_log.h"
 #include "bootutil/image.h"
 #include "bootutil/bootutil.h"
+#include "bootutil/bootutil_public.h"
 #include "bootutil/boot_hooks.h"
 #include "bootutil/fault_injection_hardening.h"
 #include "bootutil/mcuboot_status.h"
@@ -683,3 +688,67 @@ int main(void)
     while (1)
         ;
 }
+
+#if defined(CONFIG_BOOT_IMAGE_ACCESS_HOOKS)
+fih_ret boot_image_check_hook(int img_index, int slot)
+{
+#if defined(CONFIG_SOC_FAMILY_SILABS_S2)
+    if (img_index == 0 && slot == 0) {
+        uint32_t reset_cause = 0;
+        int rc = hwinfo_get_reset_cause(&reset_cause);
+
+        if (rc != 0) {
+            BOOT_LOG_WRN("boot_image_check_hook: hwinfo_get_reset_cause failed (%d)", rc);
+        } else if (reset_cause & RESET_LOW_POWER_WAKE) {
+            BOOT_LOG_INF("boot_image_check_hook: low-power wake -> skip slot0 validation");
+            FIH_RET(FIH_SUCCESS);
+        }
+    }
+#endif
+
+    FIH_RET(FIH_BOOT_HOOK_REGULAR);
+}
+
+int boot_read_image_header_hook(int img_index, int slot,
+                                struct image_header *img_head)
+{
+    BOOT_LOG_DBG("boot_read_image_header_hook: img=%d slot=%d (regular)", img_index, slot);
+    (void)img_index;
+    (void)slot;
+    (void)img_head;
+
+    return BOOT_HOOK_REGULAR;
+}
+
+int boot_perform_update_hook(int img_index, struct image_header *img_head,
+                             const struct flash_area *area)
+{
+    BOOT_LOG_INF("boot_perform_update_hook: img=%d area=%p (regular)", img_index, area);
+    (void)img_index;
+    (void)img_head;
+    (void)area;
+
+    return BOOT_HOOK_REGULAR;
+}
+
+int boot_copy_region_post_hook(int img_index, const struct flash_area *area,
+                               size_t size)
+{
+    BOOT_LOG_INF("boot_copy_region_post_hook: img=%d area=%p size=%u", img_index, area, (unsigned)size);
+    (void)img_index;
+    (void)area;
+    (void)size;
+
+    return 0;
+}
+
+int boot_read_swap_state_primary_slot_hook(int image_index,
+                                           struct boot_swap_state *state)
+{
+    BOOT_LOG_DBG("boot_read_swap_state_primary_slot_hook: img=%d (regular)", image_index);
+    (void)image_index;
+    (void)state;
+
+    return BOOT_HOOK_REGULAR;
+}
+#endif
