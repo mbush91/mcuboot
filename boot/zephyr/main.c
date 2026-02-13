@@ -512,7 +512,7 @@ int main(void)
     MCUBOOT_WATCHDOG_FEED();
 
 #if !defined(MCUBOOT_DIRECT_XIP)
-    BOOT_LOG_INF("Starting bootloader");
+    BOOT_LOG_INF("Starting bootloader!");
 #else
     BOOT_LOG_INF("Starting Direct-XIP bootloader");
 #endif
@@ -700,7 +700,7 @@ fih_ret boot_image_check_hook(int img_index, int slot)
         if (rc != 0) {
             BOOT_LOG_WRN("boot_image_check_hook: hwinfo_get_reset_cause failed (%d)", rc);
         } else if (reset_cause & RESET_LOW_POWER_WAKE) {
-            BOOT_LOG_INF("boot_image_check_hook: low-power wake -> skip slot0 validation");
+            BOOT_LOG_DBG("boot_image_check_hook: low-power wake -> skip slot0 validation");
             FIH_RET(FIH_SUCCESS);
         }
     }
