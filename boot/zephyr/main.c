@@ -20,9 +20,11 @@
 
 #include <assert.h>
 #include <zephyr/kernel.h>
-#include <zephyr/devicetree.h>
+#include <zephyr/sys/reboot.h>
 #include <zephyr/drivers/gpio.h>
-#include <zephyr/sys/__assert.h>
+#include <zephyr/drivers/hwinfo.h>
+#include "tbts_reset.h"
+#include <bootutil/bootutil_log.h>
 #include <zephyr/drivers/flash.h>
 #include <zephyr/drivers/timer/system_timer.h>
 #include <zephyr/usb/usb_device.h>
@@ -499,8 +501,20 @@ static void boot_serial_enter()
 }
 #endif
 
+struct gpio_dt_spec dbg_led = GPIO_DT_SPEC_GET(DT_NODELABEL(dbg_led), gpios);
+int turn_on_led(void)
+{
+    if (!gpio_is_ready_dt(&dbg_led)) {
+        LOG_ERR("Debug LED device was not found!");
+        return -1;
+    }
+    gpio_pin_configure_dt(&dbg_led, GPIO_OUTPUT_ACTIVE);
+    return 0;
+}
+
 int main(void)
 {
+    turn_on_led();
     struct boot_rsp rsp;
     int rc;
 #if defined(CONFIG_BOOT_USB_DFU_GPIO) || defined(CONFIG_BOOT_USB_DFU_WAIT)
@@ -613,6 +627,14 @@ int main(void)
     }
     BOOT_LOG_DBG("Left boot_go with success == %d", FIH_EQ(fih_rc, FIH_SUCCESS) ? 1 : 0);
 
+#if defined(CONFIG_SOC_FAMILY_SILABS_S2)
+    tbts_reset_init();
+    tbts_reset_reason_t reason = tbts_reset_reason_get();
+    BOOT_LOG_INF("Reset reason: %s (Raw: 0x%08x)", 
+                 tbts_reset_reason_to_str(reason), 
+                 tbts_reset_raw_cause_get());
+#endif
+
 #ifdef CONFIG_BOOT_SERIAL_BOOT_MODE
     if (io_detect_boot_mode()) {
         /* Boot mode to stay in bootloader, clear status and enter serial
@@ -700,7 +722,7 @@ fih_ret boot_image_check_hook(int img_index, int slot)
         if (rc != 0) {
             BOOT_LOG_WRN("boot_image_check_hook: hwinfo_get_reset_cause failed (%d)", rc);
         } else if (reset_cause & RESET_LOW_POWER_WAKE) {
-            BOOT_LOG_DBG("boot_image_check_hook: low-power wake -> skip slot0 validation");
+            BOOT_LOG_INF("boot_image_check_hook: low-power wake -> skip slot0 validation");
             FIH_RET(FIH_SUCCESS);
         }
     }

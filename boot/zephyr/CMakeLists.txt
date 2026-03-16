@@ -56,6 +56,7 @@ endif()
 
 zephyr_library_include_directories(
   include
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../../../tbts_firmware/lib/tbts_reset/inc
   )
 
 if(DEFINED CONFIG_MBEDTLS)
@@ -71,6 +72,7 @@ zephyr_library_sources(
   flash_map_extended.c
   os.c
   keys.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../../../tbts_firmware/lib/tbts_reset/src/tbts_reset.c
   )
 
 if(DEFINED CONFIG_ENABLE_MGMT_PERUSER)
