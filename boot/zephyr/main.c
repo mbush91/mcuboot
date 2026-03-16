@@ -512,6 +512,58 @@ int turn_on_led(void)
     return 0;
 }
 
+/* Unchecked fast boot path.
+ *
+ * This bypasses all MCUboot image validation / swap / revert / security checks
+ * and jumps directly to the primary application slot.
+ *
+ * Only call this from a startup path you fully trust.
+ */
+static void boot_jump_primary_unchecked(void)
+{
+    static struct image_header hdr;
+    struct boot_rsp rsp = {0};
+    const struct flash_area *fap;
+    int area_id;
+    int rc;
+
+    BOOT_LOG_WRN("FAST BOOT: bypassing all boot checks");
+
+    area_id = flash_area_id_from_image_slot(0);
+
+    rc = flash_area_open(area_id, &fap);
+    if (rc != 0) {
+        BOOT_LOG_ERR("fast boot: flash_area_open failed: %d", rc);
+        FIH_PANIC;
+    }
+
+    rc = flash_area_read(fap, 0, &hdr, sizeof(hdr));
+    if (rc != 0) {
+        BOOT_LOG_ERR("fast boot: flash_area_read(header) failed: %d", rc);
+        flash_area_close(fap);
+        FIH_PANIC;
+    }
+
+    if (hdr.ih_magic != IMAGE_MAGIC) {
+        BOOT_LOG_ERR("fast boot: invalid image magic 0x%08x", hdr.ih_magic);
+        flash_area_close(fap);
+        FIH_PANIC;
+    }
+
+    rsp.br_hdr = &hdr;
+    rsp.br_image_off = flash_area_get_off(fap);
+    rsp.br_flash_dev_id = flash_area_get_device_id(fap);
+
+    flash_area_close(fap);
+
+    mcuboot_status_change(MCUBOOT_STATUS_BOOTABLE_IMAGE_FOUND);
+    ZEPHYR_BOOT_LOG_STOP();
+    do_boot(&rsp);
+
+    BOOT_LOG_ERR("fast boot returned unexpectedly");
+    FIH_PANIC;
+}
+
 int main(void)
 {
     turn_on_led();
@@ -538,11 +590,15 @@ int main(void)
 
     os_heap_init();
 
+    // TODO: Add reset reason check here
+    boot_jump_primary_unchecked();
+
     ZEPHYR_BOOT_LOG_START();
 
     (void)rc;
 
     mcuboot_status_change(MCUBOOT_STATUS_STARTUP);
+
 
 #if defined(CONFIG_MCUBOOT_UUID_VID) || defined(CONFIG_MCUBOOT_UUID_CID)
     FIH_CALL(boot_uuid_init, fih_rc);
