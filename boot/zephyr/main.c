@@ -505,7 +505,7 @@ struct gpio_dt_spec dbg_led = GPIO_DT_SPEC_GET(DT_NODELABEL(dbg_led), gpios);
 int turn_on_led(void)
 {
     if (!gpio_is_ready_dt(&dbg_led)) {
-        LOG_ERR("Debug LED device was not found!");
+        BOOT_LOG_ERR("Debug LED device was not found!");
         return -1;
     }
     gpio_pin_configure_dt(&dbg_led, GPIO_OUTPUT_ACTIVE);
