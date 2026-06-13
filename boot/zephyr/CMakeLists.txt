@@ -56,6 +56,7 @@ endif()
 
 zephyr_library_include_directories(
   include
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../../../tbts_firmware/lib/tbts_reset/inc
   )
 
 if(DEFINED CONFIG_MBEDTLS)

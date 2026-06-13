@@ -20,9 +20,11 @@
 
 #include <assert.h>
 #include <zephyr/kernel.h>
-#include <zephyr/devicetree.h>
+#include <zephyr/sys/reboot.h>
 #include <zephyr/drivers/gpio.h>
-#include <zephyr/sys/__assert.h>
+#include <zephyr/drivers/hwinfo.h>
+#include "tbts_reset.h"
+#include <bootutil/bootutil_log.h>
 #include <zephyr/drivers/flash.h>
 #include <zephyr/drivers/timer/system_timer.h>
 #include <zephyr/usb/usb_device.h>
@@ -499,8 +501,72 @@ static void boot_serial_enter()
 }
 #endif
 
+struct gpio_dt_spec dbg_led = GPIO_DT_SPEC_GET(DT_NODELABEL(dbg_led), gpios);
+int turn_on_led(void)
+{
+    if (!gpio_is_ready_dt(&dbg_led)) {
+        BOOT_LOG_ERR("Debug LED device was not found!");
+        return -1;
+    }
+    gpio_pin_configure_dt(&dbg_led, GPIO_OUTPUT_ACTIVE);
+    return 0;
+}
+
+/* Unchecked fast boot path.
+ *
+ * This bypasses all MCUboot image validation / swap / revert / security checks
+ * and jumps directly to the primary application slot.
+ *
+ * Only call this from a startup path you fully trust.
+ */
+static void boot_jump_primary_unchecked(void)
+{
+    static struct image_header hdr;
+    struct boot_rsp rsp = {0};
+    const struct flash_area *fap;
+    int area_id;
+    int rc;
+
+    BOOT_LOG_WRN("FAST BOOT: bypassing all boot checks");
+
+    area_id = flash_area_id_from_image_slot(0);
+
+    rc = flash_area_open(area_id, &fap);
+    if (rc != 0) {
+        BOOT_LOG_ERR("fast boot: flash_area_open failed: %d", rc);
+        FIH_PANIC;
+    }
+
+    rc = flash_area_read(fap, 0, &hdr, sizeof(hdr));
+    if (rc != 0) {
+        BOOT_LOG_ERR("fast boot: flash_area_read(header) failed: %d", rc);
+        flash_area_close(fap);
+        FIH_PANIC;
+    }
+
+    if (hdr.ih_magic != IMAGE_MAGIC) {
+        BOOT_LOG_ERR("fast boot: invalid image magic 0x%08x", hdr.ih_magic);
+        flash_area_close(fap);
+        FIH_PANIC;
+    }
+
+    rsp.br_hdr = &hdr;
+    rsp.br_image_off = flash_area_get_off(fap);
+    rsp.br_flash_dev_id = flash_area_get_device_id(fap);
+
+    flash_area_close(fap);
+
+    mcuboot_status_change(MCUBOOT_STATUS_BOOTABLE_IMAGE_FOUND);
+    ZEPHYR_BOOT_LOG_STOP();
+    do_boot(&rsp);
+
+    BOOT_LOG_ERR("fast boot returned unexpectedly");
+    FIH_PANIC;
+}
+
 int main(void)
 {
+    turn_on_led();
     struct boot_rsp rsp;
     int rc;
 #if defined(CONFIG_BOOT_USB_DFU_GPIO) || defined(CONFIG_BOOT_USB_DFU_WAIT)
@@ -524,11 +590,15 @@ int main(void)
 
     os_heap_init();
 
+    // TODO: Add reset reason check here
+    boot_jump_primary_unchecked();
+
     ZEPHYR_BOOT_LOG_START();
 
     (void)rc;
 
     mcuboot_status_change(MCUBOOT_STATUS_STARTUP);
+
 
 #if defined(CONFIG_MCUBOOT_UUID_VID) || defined(CONFIG_MCUBOOT_UUID_CID)
     FIH_CALL(boot_uuid_init, fih_rc);
@@ -612,6 +682,14 @@ int main(void)
         FIH_CALL(boot_go, fih_rc, &rsp);
     }
     BOOT_LOG_DBG("Left boot_go with success == %d", FIH_EQ(fih_rc, FIH_SUCCESS) ? 1 : 0);
+
+#if defined(CONFIG_SOC_FAMILY_SILABS_S2)
+    tbts_reset_init();
+    tbts_reset_reason_t reason = tbts_reset_reason_get();
+    BOOT_LOG_INF("Reset reason: %s (Raw: 0x%08x)", 
+                 tbts_reset_reason_to_str(reason), 
+                 tbts_reset_raw_cause_get());
+#endif
 
 #ifdef CONFIG_BOOT_SERIAL_BOOT_MODE
     if (io_detect_boot_mode()) {
@@ -700,7 +778,7 @@ fih_ret boot_image_check_hook(int img_index, int slot)
         if (rc != 0) {
             BOOT_LOG_WRN("boot_image_check_hook: hwinfo_get_reset_cause failed (%d)", rc);
         } else if (reset_cause & RESET_LOW_POWER_WAKE) {
-            BOOT_LOG_DBG("boot_image_check_hook: low-power wake -> skip slot0 validation");
+            BOOT_LOG_INF("boot_image_check_hook: low-power wake -> skip slot0 validation");
             FIH_RET(FIH_SUCCESS);
         }
     }
